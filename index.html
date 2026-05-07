@@ -1,37 +1,40 @@
 <!DOCTYPE html>
 <html>
-    <head>
-        <title>EV Route Planner</title>
-    </head>
-    <body>
-        <h1>EV Route Planner</h1>
-        <label>START: </label>
-        <input id="start" placeholder="e.g., Jaipur"><br>
-        <label>DESTINATION: </label>
-        <input id="end" placeholder="e.g., Jodhpur"><br>
-        <label>Current battery %ge: </label>
-        <input id="battery" type="number"><br>
-        <button onclick="goToMap()">Find Route</button>
 
-        <script>
-            function goToMap(){
-                let start = document.getElementById("start").value;
-                let end = document.getElementById("end").value;
-                let battery = document.getElementById("battery").value;
-                if(!start || !end || !battery){
-                    alert("Please fill all the fields!");
-                    return;
-                }
-                if(start===end){
-                    alert("Start and destination cannot be same!");
-                    return;
-                }
-                if(battery<=0 || battery>100){
-                    alert("Battery %ge must be between 1 to 100.");
-                    return;
-                }
-                window.location.href=`map.html?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&battery=${encodeURIComponent(battery)}`;
+<head>
+    <title>EV Route Planner</title>
+</head>
+
+<body>
+    <h1>EV Route Planner</h1>
+    <label>START: </label>
+    <input id="start" placeholder="e.g., Jaipur"><br>
+    <label>DESTINATION: </label>
+    <input id="end" placeholder="e.g., Jodhpur"><br>
+    <label>Current battery %ge: </label>
+    <input id="battery" type="number"><br>
+    <button onclick="goToMap()">Find Route</button>
+
+    <script>
+        function goToMap() {
+            let start = document.getElementById("start").value;
+            let end = document.getElementById("end").value;
+            let battery = document.getElementById("battery").value;
+            if (!start || !end || !battery) {
+                alert("Please fill all the fields!");
+                return;
             }
-        </script>
-    </body>
+            if (start === end) {
+                alert("Start and destination cannot be same!");
+                return;
+            }
+            if (battery <= 0 || battery > 100) {
+                alert("Battery %ge must be between 1 to 100.");
+                return;
+            }
+            window.location.href = `map.html?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&battery=${encodeURIComponent(battery)}`;
+        }
+    </script>
+</body>
+
 </html>
