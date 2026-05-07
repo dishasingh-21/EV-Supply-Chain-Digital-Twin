@@ -347,9 +347,17 @@ function getTotalDistance(route) {
     return total;
 }
 
+function updateStatus(text, color = "var(--primary)") {
+    const statusText = document.getElementById("status-text");
+    const statusDot = document.getElementById("status-dot");
+    if (statusText) statusText.innerText = text;
+    if (statusDot) statusDot.style.background = color;
+}
+
 //starter function.
 async function init() {
     console.log("INIT RUNNING");
+    updateStatus("Loading Graph Data...", "var(--accent)");
 
     try {
         const response = await fetch('workable_stations.json');
@@ -374,9 +382,11 @@ async function init() {
         return;
     }
 
+    updateStatus("Geocoding Locations...", "var(--accent)");
     let startloc = await getCoordinates(start);
     let endloc = await getCoordinates(end);
     if (!startloc || !endloc) {
+        updateStatus("Geocoding Failed", "var(--danger)");
         alert(`Could not find coordinates for ${!startloc ? start : end}. Please try a more specific name.`);
         return;
     }
@@ -393,10 +403,12 @@ async function init() {
     }
 
     if (directPossible) {
+        updateStatus("Direct Route Found", "var(--success)");
         console.log("Direct route possible!");
         route = [startloc, endloc];
     }
     else {
+        updateStatus("Optimizing Route Path...", "var(--accent)");
         console.log("Calculating route with charging stops...");
         let stationsList = graph.station.map(s => ({ ...s, isCharging: true }));
         let AllNodes = [startloc, ...stationsList, endloc];
@@ -445,7 +457,22 @@ async function init() {
     console.log("Route found with", route.length, "points. Drawing...");
     drawRoute(route, batteryPercent);
     let totalDistance = getTotalDistance(route);
+    
+    // Update UI Stats
     document.getElementById("distance").innerText = totalDistance.toFixed(1);
+    
+    // Estimate ETA (avg 60km/h + 30m per charge stop)
+    let hours = totalDistance / 60;
+    let chargeStops = route.filter(p => p.isCharging).length;
+    let totalMinutes = (hours * 60) + (chargeStops * 30);
+    let estHours = Math.floor(totalMinutes / 60);
+    let estMins = Math.round(totalMinutes % 60);
+    
+    document.getElementById("eta").innerText = `${estHours}h ${estMins}m`;
+    const totalEtaElem = document.getElementById("total-eta");
+    if (totalEtaElem) totalEtaElem.innerText = `${estHours.toString().padStart(2, '0')}:${estMins.toString().padStart(2, '0')} hrs`;
+    
+    updateStatus("Route Optimized", "var(--success)");
     console.log("Route:", route);
 }
 
