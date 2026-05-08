@@ -217,9 +217,8 @@ async function aStar(nodes, start, end, MAX_RANGE, initialRange, adj) {
 
             if (d > battery) continue;
 
-            let newBattery = MAX_RANGE;
-            // Special case: if target is the final destination, we don't necessarily "recharge" there for the path logic, 
-            // but it doesn't matter since we stop.
+            let isEndNode = neighborIdx === end;
+            let newBattery = isEndNode ? (battery - d) : MAX_RANGE;
 
             let new_g = g[current] + d;
             if (new_g >= g[neighborIdx]) continue;
@@ -267,6 +266,8 @@ async function drawRoute(route, batteryPercent) {
     let remaining = MAX_RANGE * (batteryPercent / 100);
     let fullPath = [];
     let promises = [];
+    let actualTotalDistance = 0;
+
     for (let i = 0; i < route.length - 1; i++) {
         let start = route[i];
         let end = route[i + 1];
@@ -278,11 +279,11 @@ async function drawRoute(route, batteryPercent) {
     results.forEach((data, i) => {
         if (!data.routes || data.routes.length === 0) return;
         let distance_travelled = data.routes[0].distance / 1000;
-        remaining -= distance_travelled;
+        actualTotalDistance += distance_travelled;
+
+        let battery_at_arrival = remaining - distance_travelled;
         let next = route[i + 1];
-        if (next.isCharging) {
-            remaining = MAX_RANGE;
-        }
+
         let coords = data.routes[0].geometry.coordinates;
         coords.forEach((c) => {
             const pt = [c[1], c[0]];
@@ -298,8 +299,13 @@ async function drawRoute(route, batteryPercent) {
         let mid = [midcoords[1], midcoords[0]];
         L.marker(mid).addTo(map).bindPopup(
             `Distance: ${distance_travelled.toFixed(1)} km<br>
-            Battery equivalent left: ${remaining.toFixed(1)} km`
+            Battery on arrival: ${Math.max(0, battery_at_arrival).toFixed(1)} km`
         );
+
+        remaining = battery_at_arrival;
+        if (next.isCharging) {
+            remaining = MAX_RANGE;
+        }
     });
 
     let poly = L.polyline(fullPath, {
@@ -335,6 +341,8 @@ async function drawRoute(route, batteryPercent) {
             });
         }
     });
+
+    return actualTotalDistance;
 }
 
 //get total distance.
@@ -454,24 +462,25 @@ async function init() {
         console.log("No route found between", startloc, "and", endloc);
         return;
     }
-    console.log("Route found with", route.length, "points. Drawing...");
-    drawRoute(route, batteryPercent);
-    let totalDistance = getTotalDistance(route);
-    
-    // Update UI Stats
-    document.getElementById("distance").innerText = totalDistance.toFixed(1);
-    
-    // Estimate ETA (avg 60km/h + 30m per charge stop)
-    let hours = totalDistance / 60;
-    let chargeStops = route.filter(p => p.isCharging).length;
-    let totalMinutes = (hours * 60) + (chargeStops * 30);
-    let estHours = Math.floor(totalMinutes / 60);
-    let estMins = Math.round(totalMinutes % 60);
-    
-    document.getElementById("eta").innerText = `${estHours}h ${estMins}m`;
-    const totalEtaElem = document.getElementById("total-eta");
-    if (totalEtaElem) totalEtaElem.innerText = `${estHours.toString().padStart(2, '0')}:${estMins.toString().padStart(2, '0')} hrs`;
-    
+    updateStatus("Drawing Path...", "var(--accent)");
+    let actualDistance = await drawRoute(route, batteryPercent);
+
+    // Update UI Stats with actual road distance if available
+    if (actualDistance > 0) {
+        document.getElementById("distance").innerText = actualDistance.toFixed(1);
+
+        // Re-calculate ETA with actual road distance
+        let actualHours = actualDistance / 60;
+        let chargeStops = route.filter(p => p.isCharging).length;
+        let actualTotalMinutes = (actualHours * 60) + (chargeStops * 30);
+        let actualEstHours = Math.floor(actualTotalMinutes / 60);
+        let actualEstMins = Math.round(actualTotalMinutes % 60);
+
+        document.getElementById("eta").innerText = `${actualEstHours}h ${actualEstMins}m`;
+        const actualTotalEtaElem = document.getElementById("total-eta");
+        if (actualTotalEtaElem) actualTotalEtaElem.innerText = `${actualEstHours.toString().padStart(2, '0')}:${actualEstMins.toString().padStart(2, '0')} hrs`;
+    }
+
     updateStatus("Route Optimized", "var(--success)");
     console.log("Route:", route);
 }
