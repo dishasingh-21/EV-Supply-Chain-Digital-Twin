@@ -6,7 +6,7 @@ const end = params.get("end");
 const batteryPercent = parseFloat(params.get("battery"));
 
 const DEBUG_VISUAL = true;
-//Debugging and visualisation
+//Debugging and visualisatio (not really used in the algorithm though, just left here)
 let debug_layers = [];
 function sleep(ms) {
     return new Promise(res => setTimeout(res, ms));
