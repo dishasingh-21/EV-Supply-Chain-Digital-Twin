@@ -172,7 +172,7 @@ async function getDistance(a, b) {
 
 //Route Optimization Core
 //1. Checking if we can directly reach destination in one go.
-const MAX_RANGE = 400;
+const MAX_RANGE = 400; //In general, the range of many EV cars is around 300-400km, so we took 400km in our case to simplify the process, a bit.
 async function DirectPossible(START, END, initialRange) {
     let d = await getDistance(START, END);
     let result = d <= initialRange;
@@ -469,7 +469,7 @@ async function init() {
     if (actualDistance > 0) {
         document.getElementById("distance").innerText = actualDistance.toFixed(1);
 
-        // Re-calculate ETA with actual road distance
+        // Re-calculate ETA with actual road distance. Assumptions: Speed=60km/hr, Charging Time = 30minutes
         let actualHours = actualDistance / 60;
         let chargeStops = route.filter(p => p.isCharging).length;
         let actualTotalMinutes = (actualHours * 60) + (chargeStops * 30);
