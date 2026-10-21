@@ -1,0 +1,166 @@
+{
+  "_comment": "India LFP Lithium Supply Chain — Phase 0 calibration",
+  "_calibration": {
+    "annual_evs": 200000,
+    "avg_kwh": 30,
+    "chemistry": "LFP",
+    "lce_per_kwh": 0.3194,
+    "weekly_demand_kg_lce": 37000,
+    "calc": "200000 × 30 × 0.3194 ÷ 52 ≈ 36,862 ≈ 37,000 kg/wk"
+  },
+  "_yield_chain_backwards": {
+    "oem_demand":        "37,000 ÷ 1.00 = 37,000",
+    "pack_to_oem":       "37,000 ÷ 0.99 = 37,374",
+    "cell_to_pack":      "37,374 ÷ 0.96 = 38,931",
+    "precursor_to_cell": "38,931 ÷ 0.95 = 40,980",
+    "processing_to_prec":"40,980 ÷ 0.90 = 45,533",
+    "mining_to_proc":    "45,533 ÷ 0.90 = 50,593 (node yield only)"
+  },
+  "nodes": [
+    {
+      "node_id": "atacama-deposits",
+      "node_type": "extractor",
+      "location": "Atacama, Chile",
+      "weekly_capacity_lce": 120000,
+      "lead_time_weeks": 10,
+      "yield_rate": 0.90,
+      "initial_inventory_lce": 960000,
+      "_notes": "8-week buffer. Capacity is India-relevant slice of SQM+Albemarle ~2100 t/wk total."
+    },
+    {
+      "node_id": "chile-mining",
+      "node_type": "extractor",
+      "location": "Salar de Atacama, Chile",
+      "weekly_capacity_lce": 110000,
+      "lead_time_weeks": 10,
+      "yield_rate": 0.90,
+      "initial_inventory_lce": 880000,
+      "_yield_source": "IEA Critical Minerals 2022: 90% Li recovery from brines"
+    },
+    {
+      "node_id": "china-processing",
+      "node_type": "processor",
+      "location": "Sichuan / Qinghai, China",
+      "weekly_capacity_lce": 55000,
+      "lead_time_weeks": 7,
+      "yield_rate": 0.90,
+      "initial_inventory_lce": 385000,
+      "_concentration_risk": "China controls ~75% of Li processing globally (IEA 2022). Highest HHI point in chain."
+    },
+    {
+      "node_id": "china-precursor",
+      "node_type": "manufacturer",
+      "location": "Guangdong / Hunan, China",
+      "weekly_capacity_lce": 46000,
+      "lead_time_weeks": 4,
+      "yield_rate": 0.95,
+      "initial_inventory_lce": 184000,
+      "_yield_source": "CATL internal benchmark cited Reuters 2022"
+    },
+    {
+      "node_id": "china-cell-mfg",
+      "node_type": "assembler",
+      "location": "Fujian / Guangdong, China",
+      "weekly_capacity_lce": 43000,
+      "lead_time_weeks": 4,
+      "yield_rate": 0.96,
+      "initial_inventory_lce": 172000,
+      "_yield_source": "IEA 2023 battery supply chain report; range 94-97%"
+    },
+    {
+      "node_id": "india-pack-assembly",
+      "node_type": "assembler",
+      "location": "Pune / Sanand, Gujarat, India",
+      "weekly_capacity_lce": 41000,
+      "lead_time_weeks": 3,
+      "yield_rate": 0.99,
+      "initial_inventory_lce": 123000,
+      "_yield_source": "Dunn et al. 2021, Joule; pack assembly is mechanical, near-lossless",
+      "_connection_to_project": "Packs assembled here power the EVs whose charging routes your Route Optimizer handles."
+    },
+    {
+      "node_id": "india-oem",
+      "node_type": "oem",
+      "location": "Pune / Bengaluru / Rajasthan, India",
+      "weekly_capacity_lce": 40000,
+      "lead_time_weeks": 2,
+      "yield_rate": 1.00,
+      "initial_inventory_lce": 148000,
+      "_oems": ["Tata Motors (Nexon EV)", "Ola Electric (S1)", "MG Motor (Comet)"],
+      "_initial_inv": "4-week buffer (leaner — OEMs prefer JIT to reduce working capital)"
+    },
+    {
+      "node_id": "india-recycling",
+      "node_type": "recycler",
+      "location": "Mumbai / Pune, India",
+      "weekly_capacity_lce": 5000,
+      "lead_time_weeks": 8,
+      "yield_rate": 0.72,
+      "initial_inventory_lce": 20000,
+      "_yield_source": "Harper et al. 2019, Nature; hydromet Li recovery 72-78%",
+      "_capacity_source": "Attero + Lohum + BatX combined, CII Battery Recycling Report 2023; projected 2025-26"
+    }
+  ],
+  "arcs": [
+    {
+      "source": "atacama-deposits",
+      "dest": "chile-mining",
+      "capacity_lce": 110000,
+      "lead_time_weeks": 1,
+      "transport_loss": 0.01
+    },
+    {
+      "source": "chile-mining",
+      "dest": "china-processing",
+      "capacity_lce": 55000,
+      "lead_time_weeks": 10,
+      "transport_loss": 0.005,
+      "_note": "Ocean freight Caldera → Tianjin ~21 days. 0.5% moisture loss from Li₂CO₃ bags."
+    },
+    {
+      "source": "china-processing",
+      "dest": "china-precursor",
+      "capacity_lce": 45000,
+      "lead_time_weeks": 2,
+      "transport_loss": 0.002
+    },
+    {
+      "source": "china-precursor",
+      "dest": "china-cell-mfg",
+      "capacity_lce": 43000,
+      "lead_time_weeks": 1,
+      "transport_loss": 0.001
+    },
+    {
+      "source": "china-cell-mfg",
+      "dest": "india-pack-assembly",
+      "capacity_lce": 41000,
+      "lead_time_weeks": 4,
+      "transport_loss": 0.003,
+      "_risk": "CRITICAL — China export controls on battery-grade Li would halt this arc."
+    },
+    {
+      "source": "india-pack-assembly",
+      "dest": "india-oem",
+      "capacity_lce": 40000,
+      "lead_time_weeks": 2,
+      "transport_loss": 0.001
+    },
+    {
+      "source": "india-oem",
+      "dest": "india-recycling",
+      "capacity_lce": 2000,
+      "lead_time_weeks": 260,
+      "transport_loss": 0.05,
+      "_note": "End-of-life return: ~5 years (260 weeks) after sale. Small volume in Phase 0."
+    },
+    {
+      "_DISABLED_source": "india-recycling",
+      "_DISABLED_dest": "china-processing",
+      "_why_disabled": "Creates a cycle: china-processing → ... → india-recycling → china-processing. DAG topology breaks. In Phase 1 this becomes an EXTERNAL_SUPPLY event injected at china-processing instead.",
+      "_capacity_lce": 3600,
+      "_lead_time_weeks": 12,
+      "_transport_loss": 0.01
+    }
+  ]
+}
