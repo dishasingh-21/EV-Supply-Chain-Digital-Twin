@@ -1,0 +1,30 @@
+{
+  "name": "ev-route-optimizer-server",
+  "version": "1.0.0",
+  "description": "Backend for the EV Charging Route Optimizer — MongoDB-backed station data, A* route planning, and OSRM/Nominatim proxying with distance caching.",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "seed": "node scripts/seedStations.js && node scripts/seedRecommendations.js && node scripts/precomputeAdjacency.js",
+    "seed:warehouses": "node scripts/seedWarehouses.js",
+    "import:warehouses": "node scripts/importWarehousesExcel.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.5.1",
+    "mongoose": "^8.5.1",
+    "morgan": "^1.10.0",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4",
+    "xlsx": "^0.18.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
