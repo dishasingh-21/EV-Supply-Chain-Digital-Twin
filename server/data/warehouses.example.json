@@ -1,0 +1,11 @@
+[
+  {
+    "code": "WH01",
+    "name": "Example Warehouse",
+    "town": "Example Town",
+    "lat": 0.0,
+    "lon": 0.0,
+    "capacityUnits": 0,
+    "active": true
+  }
+]

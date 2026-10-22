@@ -1,0 +1,29 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: ev_route_mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  api:
+    build: ./server
+    container_name: ev_route_api
+    depends_on:
+      - mongo
+    ports:
+      - "5000:5000"
+    environment:
+      MONGO_URI: mongodb://mongo:27017/ev_route_optimizer
+      PORT: 5000
+      MAX_RANGE_KM: 400
+      AVG_SPEED_KMH: 60
+      CHARGE_STOP_MINUTES: 30
+      CLIENT_ORIGIN: "*"
+    volumes:
+      - ./server:/app
+      - /app/node_modules
+
+volumes:
+  mongo_data:

@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EV Route Planner</title>
     <link rel="stylesheet" href="index.css">
+    <script src="config.js"></script>
 </head>
 
 <body class="no-sidebar">
@@ -54,7 +55,8 @@
                 <div class="form-grid">
                     <div class="form-group">
                         <label>Starting Point</label>
-                        <input id="start" type="text" placeholder="Enter origin address...">
+                        <input id="start" type="text" placeholder="Enter origin address..." list="warehouseList">
+                        <datalist id="warehouseList"></datalist>
                     </div>
                     <div class="form-group">
                         <label>Ending Destination</label>
@@ -81,6 +83,25 @@
     </div>
 
     <script>
+        // Populate the warehouse autocomplete list for the Starting Point field.
+        // Purely additive: typing a warehouse name here (e.g. "Jaipur Fulfillment
+        // Center") routes as a pickup->delivery trip; typing anything else keeps
+        // the original place-to-place geocoded planner behavior.
+        (async function loadWarehouseOptions() {
+            try {
+                const res = await fetch(`${window.API_BASE_URL}/warehouses`);
+                const data = await res.json();
+                const list = document.getElementById("warehouseList");
+                (data.warehouses || []).forEach((w) => {
+                    const opt = document.createElement("option");
+                    opt.value = w.name;
+                    list.appendChild(opt);
+                });
+            } catch (err) {
+                console.warn("Could not load warehouse list:", err);
+            }
+        })();
+
         function goToMap() {
             let start = document.getElementById("start").value;
             let end = document.getElementById("end").value;
