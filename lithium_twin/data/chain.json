@@ -24,8 +24,8 @@
       "weekly_capacity_lce": 120000,
       "lead_time_weeks": 10,
       "yield_rate": 0.90,
-      "initial_inventory_lce": 960000,
-      "_notes": "8-week buffer. Capacity is India-relevant slice of SQM+Albemarle ~2100 t/wk total."
+      "initial_inventory_lce": 50000000,
+      "_notes": "Sized to survive 500+ weeks (10 years) even at sustained maximum arc capacity draw (~84,000 kg/wk), far exceeding any realistic simulation horizon. Real Chilean reserves (USGS 2023: ~9.3M tonnes Li metal, ~49.5 billion kg LCE) make depletion a non-issue at India-EV-demand draw rates over any timescale this model operates on — Phase 0's original 960,000 kg ('8-week buffer') was calibrated for a 4-week demo and was never updated for longer runs."
     },
     {
       "node_id": "chile-mining",

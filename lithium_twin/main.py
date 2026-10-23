@@ -15,6 +15,8 @@ WHAT TO LOOK FOR IN THE OUTPUT:
 from __future__ import annotations
 import sys
 from pathlib import Path
+from lithium_twin.simulation.capacity import set_generous_capacities
+from lithium_twin.models.events import EventType
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -26,7 +28,7 @@ from lithium_twin.simulation.order_policy import build_policies
 from lithium_twin.simulation.engine import SupplyChainEngine
 
 CHAIN_JSON = Path(__file__).parent / "data" / "chain.json"
-WEEKS = 52
+WEEKS = 156
 DEMAND_MEAN = lce_from_kwh(200_000 * 30, "LFP") / 52.0   # ~36,862 kg/wk
 DEMAND_CV = 0.15
 SERVICE_LEVEL = 0.95
@@ -40,6 +42,7 @@ def run() -> None:
 
     # ── Load chain ────────────────────────────────────────────────────
     graph = SupplyChainGraph.from_json(CHAIN_JSON)
+    set_generous_capacities(graph, DEMAND_MEAN)
     log = EventLog()
 
     # ── Demand generator ──────────────────────────────────────────────
@@ -53,9 +56,17 @@ def run() -> None:
         print(f"  {node_id:30s}  {policy.summary()}")
 
     # ── Run simulation ────────────────────────────────────────────────
-    engine = SupplyChainEngine(graph, log, policies, demand_gen)
+    engine = SupplyChainEngine(graph, log, policies, demand_gen, service_level=SERVICE_LEVEL)
     print(f"\nRunning {WEEKS}-week simulation...")
     engine.run(WEEKS)
+    print("\n  Diagnostic — OEM cumulative fill rate & backlog trend:")
+    for wk in [13, 26, 39, 52, 65, 78, 91, 104, 117, 130, 143, 156]:
+        demand_so_far = log.total_flow(EventType.DEMAND_RECEIVED, node_id="india-oem", week_end=wk)
+        dispatched_so_far = log.total_flow(EventType.SHIPMENT_DISPATCHED, node_id="india-oem", week_end=wk)
+        fr = dispatched_so_far / demand_so_far if demand_so_far else 0.0
+        snap = next((s for s in engine.weekly_snapshots if s["week"] == wk), None)
+        backlog_at_wk = snap["oem_backlog"] if snap else None
+        print(f"  week {wk:3d}:  cumulative fill rate={fr:6.1%}   oem_backlog={backlog_at_wk:,.0f}")
     print(f"Done. {len(log)} events logged.")
 
     # ── Results ───────────────────────────────────────────────────────

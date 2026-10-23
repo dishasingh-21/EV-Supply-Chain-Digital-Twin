@@ -11,15 +11,19 @@ from lithium_twin.simulation.demand import DemandGenerator
 
 _RECYCLING_LEAD_TIME: int = 12
 _RECYCLING_TRANSPORT_LOSS: float = 0.01
+_RECALIBRATION_INTERVAL: int =4
+_RECALIBRATION_WINDOW: int=12
+_MIN_SAMPLES_FOR_RECALIBRATION: int=8
 
 class SupplyChainEngine:
     """SimPy-based weekly simulation engine for the lithium supply chain."""
-    def __init__(self, graph: SupplyChainGraph, log: EventLog, policies: dict[str, BaseStockPolicy], demand_gen: DemandGenerator) -> None:
+    def __init__(self, graph: SupplyChainGraph, log: EventLog, policies: dict[str, BaseStockPolicy], demand_gen: DemandGenerator, service_level: float=0.95):
         self.env = simpy.Environment()
         self.graph = graph
         self.log = log
         self.policies = policies
         self.demand_gen = demand_gen
+        self.service_level = service_level
         self.weekly_snapshots: list[dict] = []
 
     def run(self, weeks: int) -> None:
@@ -27,6 +31,8 @@ class SupplyChainEngine:
         self.env.process(self._market_demand_process())
         for node_id in self.graph.topological_sort():
             self.env.process(self._node_process(node_id))
+        for node_id in self.policies:
+            self.env.process(self._recalibration_process(node_id))
         self.env.process(self._recycling_injection_process())
         self.env.process(self._snapshot_process(weeks))
         self.env.run(until=weeks+0.5)
@@ -72,13 +78,14 @@ class SupplyChainEngine:
             # Step 1: Retry fulfilling any outstanding backlog from current inventory
             if node.backlog > 0 and node.inventory_on_hand > 0:
                 downstream_ids = self.graph.downstream_nodes(node_id)
-                if downstream_ids:
+                if downstream_ids and node_id!="india-oem":
                     receiver_id = downstream_ids[0]
                     arc=self.graph.arc_data(node_id, receiver_id)
+                    retry_qty = min(node.backlog, arc["capacity_lce"])
                     self.env.process(self._shipment_process(
                         supplier_id=node_id,
                         receiver_id=receiver_id,
-                        order_qty=node.backlog,
+                        order_qty=retry_qty,
                         arc=arc,
                     ))
                 else:
@@ -274,4 +281,28 @@ class SupplyChainEngine:
         if total_demand == 0:
             return 0.0
         return total_dispatched / total_demand
+
+    def _recalibration_process(self, node_id: str):
+        """
+        Periodically recalibrates a node's safety stock from its own
+        recently observed incoming order history, instead of leaving it
+        fixed for the whole run.
+        """
+        policy = self.policies.get(node_id)
+        if policy is None:
+            return
+        while True:
+            yield self.env.timeout(_RECALIBRATION_INTERVAL)
+            week = int(self.env.now)
+            window_start = max(1, week-_RECALIBRATION_WINDOW+1)
+            observed = [
+                e.quantity_lce for e in self.log.query(
+                    node_id = node_id, event_type = EventType.DEMAND_RECEIVED, week_start = window_start, week_end = week,
+                )
+            ]
+            if len(observed) < _MIN_SAMPLES_FOR_RECALIBRATION:
+                continue
+            policy.recalibrate(observed, service_level=self.service_level)
+
+
 

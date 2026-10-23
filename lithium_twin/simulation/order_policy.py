@@ -12,6 +12,7 @@ class BaseStockPolicy:
     safety_stock: float
     demand_mean: float
     lead_time: int
+    smoothing_alpha: float = 0.35
 
     @classmethod
     def from_demand(cls, demand_mean: float, demand_std: float, lead_time: int, service_level: float=0.95) -> "BaseStockPolicy":
@@ -36,13 +37,28 @@ class BaseStockPolicy:
         How much to order this week.
         Returns max(0, S-inventory_position). If already above S, then return 0 i.e., no order placed.
         """
-        return max( 0.0, self.base_stock_level - inventory_position)
+        gap = self.base_stock_level - inventory_position
+        return max(0.0, self.demand_mean + self.smoothing_alpha * gap)
 
     def summary(self) -> str:
         return (
             f"BaseStockPolicy: S={self.base_stock_level:,.0f} kg LCE "
             f"(LT={self.lead_time} weeks, SS={self.safety_stock:,.0f} kg LCE)"
         )
+
+    def recalibrate(self, demand_samples: list[float], service_level: float=0.95) -> None:
+        """Recompute base_stock_level and safety_stock from observed demand."""
+        import statistics
+        if len(demand_samples) < 2:
+            return
+        new_mean = statistics.mean(demand_samples)
+        new_std = statistics.stdev(demand_samples)
+        z = float(norm.ppf(service_level))
+        self.safety_stock = round(z * new_std * (self.lead_time ** 0.5), 2)
+        self.base_stock_level = round(new_mean * self.lead_time + self.safety_stock, 2)
+        self.demand_mean = new_mean
+
+
 
 def build_policies(
         graph, demand_mean: float, demand_cv: float = 0.15, service_level: float = 0.95,
