@@ -80,23 +80,37 @@ class TestNodeStateVariables:
 
     def test_demand_increases_backlog(self):
         n = self._node()
-        n.receive_demand(5000.0)
-        assert n.backlog == 5000.0
+        n.receive_demand("customer-a", 5000.0)
+        assert n.backlog["customer-a"] == 5000.0
+        assert n.total_backlog() == 5000.0
 
     def test_dispatch_fills_from_inventory(self):
         n = self._node(10000.0)
-        n.receive_demand(8000.0)
-        d = n.dispatch_shipment(8000.0)
+        n.receive_demand("customer-a", 8000.0)
+        d = n.dispatch_shipment("customer-a", 8000.0)
         assert d == 8000.0
         assert n.inventory_on_hand == 2000.0
-        assert n.backlog == 0.0
+        assert n.total_backlog() == 0.0
 
     def test_partial_fill_when_inventory_short(self):
         n = self._node(3000.0)
-        n.receive_demand(8000.0)
-        d = n.dispatch_shipment(8000.0)
+        n.receive_demand("customer-a", 8000.0)
+        d = n.dispatch_shipment("customer-a", 8000.0)
         assert d == 3000.0
-        assert n.backlog == 5000.0  # shortage propagates upstream
+        assert n.backlog["customer-a"] == 5000.0  # shortage propagates upstream
+
+    def test_multiple_customers_tracked_separately(self):
+        """The actual point of Phase 3a: a node with two downstream
+        customers tracks each one's shortfall independently, not merged
+        into one undifferentiated number."""
+        n = self._node(5000.0)
+        n.receive_demand("region-a", 3000.0)
+        n.receive_demand("region-b", 4000.0)
+        assert n.total_backlog() == 7000.0
+        dispatched_a = n.dispatch_shipment("region-a", 3000.0)
+        assert dispatched_a == 3000.0
+        assert n.backlog["region-a"] == 0.0
+        assert n.backlog["region-b"] == 4000.0  # untouched by region-a's fulfillment
 
     def test_order_increases_in_transit(self):
         n = self._node()

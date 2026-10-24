@@ -1,0 +1,12 @@
+{
+  "_comment": "Regional demand weights for india-oem, derived from server/data/warehouses.xlsx (capacityUnits as a proxy for each region's share of national EV demand -- a warehouse's throughput capacity was presumably sized against that region's real distribution volume). Only active=TRUE warehouses included (Jaisalmer Border Depot, WH08, is active=FALSE in the source and excluded here).",
+  "regions": [
+    {"region_id": "jaipur",   "name": "Jaipur Fulfillment Center",   "town": "Jaipur",   "lat": 26.9124,   "lon": 75.7873,   "capacity_units": 5000},
+    {"region_id": "jodhpur",  "name": "Jodhpur Distribution Hub",    "town": "Jodhpur",  "lat": 26.209065, "lon": 73.027268, "capacity_units": 4200},
+    {"region_id": "udaipur",  "name": "Udaipur Regional Warehouse",  "town": "Udaipur",  "lat": 24.575043, "lon": 73.690237, "capacity_units": 3100},
+    {"region_id": "ajmer",    "name": "Ajmer Depot",                 "town": "Ajmer",     "lat": 26.407877, "lon": 74.621291, "capacity_units": 2800},
+    {"region_id": "bikaner",  "name": "Bikaner North Warehouse",     "town": "Bikaner",  "lat": 28.009432, "lon": 73.284382, "capacity_units": 2500},
+    {"region_id": "kota",     "name": "Kota Industrial Warehouse",   "town": "Kota",      "lat": 25.241594, "lon": 76.882369, "capacity_units": 3600},
+    {"region_id": "alwar",    "name": "Alwar Transit Hub",           "town": "Alwar",     "lat": 27.55,     "lon": 76.63,     "capacity_units": 2000}
+  ]
+}

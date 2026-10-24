@@ -1,15 +1,18 @@
 """
-main.py — Phase 1 demo: SimPy engine, base-stock policy, 52-week run.
+main.py — Core SimPy engine demo: base-stock policy, 156-week run.
 
 HOW TO RUN:
   python -m lithium_twin.main
 
 WHAT TO LOOK FOR IN THE OUTPUT:
-  1. OEM fill rate: should be near the service level target (95%)
-  2. Bullwhip coefficients: should be > 1 and increasing upstream
-     — this confirms the model is producing realistic dynamics
-  3. Total inventory drawdown: system starts with buffer stock
-     that the policies gradually consume and stabilize
+  1. OEM fill rate: expect it to oscillate rather than settle near the
+     95% target -- a decentralized chain with multi-week lead times
+     produces boom-bust bullwhip cycles, not a flat steady state.
+  2. Bullwhip coefficients: should be > 1 and generally increasing
+     upstream -- this confirms the model is producing realistic dynamics.
+  3. Total inventory drawdown: system starts with buffer stock that
+     the policies gradually consume; backlog grows during each
+     downswing of the oscillation.
 """
 
 from __future__ import annotations
@@ -94,8 +97,8 @@ def run() -> None:
         print(f"  OEM inventory:           {last['oem_inventory']:>12,.0f} kg LCE")
         print(f"  OEM backlog:             {last['oem_backlog']:>12,.0f} kg LCE")
 
-    print(f"\n  ✓ Phase 1 complete")
-    print(f"  Next: Phase 2 — disruption scenarios + network flow optimisation\n")
+    print(f"\n  ✓ Core engine run complete (Phases 1-3a: policies, disruptions,")
+    print(f"  Monte Carlo, optimization benchmark, multi-customer backlog)\n")
 
 
 if __name__ == "__main__":

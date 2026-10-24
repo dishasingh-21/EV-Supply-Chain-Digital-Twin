@@ -1,5 +1,14 @@
 """
-Supply chain node with 3 canonical state variables (inventory_on_hand, backlog, in_transit).
+Supply chain node with 4 state variables:
+    - inventory_on_hand: finished/dispatchable stock (post-yield)
+    - backlog: dict[customer_id, float] -- unmet demand PER CUSTOMER, not
+      pooled, so a node with more than one downstream customer (e.g.
+      india-oem split into regions, Phase 3b) can tell which customer is
+      underserved. Use total_backlog() for the pooled total.
+    - in_transit: ordered from upstream, not yet arrived
+    - raw_input: arrived from upstream, not yet run through produce()
+      (separated from inventory_on_hand so yield loss and weekly_capacity
+      are applied for real, not assumed away)
 
 Yield rate sources:
     - Mining (brine): 0.90 (Source: IEA Critical Minerals 2022; ~8% evaporation/seepage)
@@ -11,7 +20,7 @@ Yield rate sources:
     - Recycling: 0.72 (Source: Harper et al. 2019, Nature; hydromet Li recovery)
 """
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 class NodeType(str, Enum):
@@ -40,9 +49,9 @@ class SupplyChainNode:
     lead_time_weeks: int
     yield_rate: float = 0.0
 
-    # The 3 Sterman state variables (all mutable, all in kg LCE)
+    # State variables (all mutable, all in kg LCE)
     inventory_on_hand: float = 0.0
-    backlog: float = 0.0
+    backlog: dict[str, float] = field(default_factory=dict)  # per-customer, not pooled
     in_transit: float = 0.0
     raw_input: float = 0.0
 
@@ -56,19 +65,36 @@ class SupplyChainNode:
         if self.lead_time_weeks < 1:
             raise ValueError(f"lead_time_weeks must be >= 1, got {self.lead_time_weeks}")
 
-    def receive_demand(self, qty: float) -> None:
-        """Downstream places an order. Increases backlog."""
-        self.backlog += qty
+    def receive_demand(self, customer_id: str, qty: float) -> None:
+        """A specific downstream customer places demand. Tracked per
+        customer_id (not a single pooled number) so a node serving more
+        than one downstream customer -- an OEM split into regions
+        (Phase 3b), or any node with more than one downstream node -- can
+        tell which customer is underserved, instead of collapsing every
+        shortfall into one undifferentiated figure. customer_id is either
+        a real downstream node's node_id (ordinary node-to-node arcs) or a
+        logical key like "market" for a node that serves demand directly
+        with no arc."""
+        self.backlog[customer_id] = self.backlog.get(customer_id, 0.0) + qty
 
-    def dispatch_shipment(self, qty:float) -> float:
+    def dispatch_shipment(self, customer_id: str, qty: float) -> float:
         """
-        Ships up to qty from inventory. Returns what was actually shipped.
-        Partial fills happen when inventory < backlog. This is what propagates shortages upstream, the bullwhip mechanism.
+        Ships up to qty to ONE specific customer from inventory. Returns
+        what was actually shipped. Partial fills happen when inventory <
+        qty -- this is what propagates shortages upstream, the bullwhip
+        mechanism. The caller decides how much each customer gets this
+        week (e.g. engine.py's proportional rationing across several
+        backlogged customers when inventory can't cover everyone) --
+        this method just executes one customer's allocation.
         """
         available = min(self.inventory_on_hand, qty)
         self.inventory_on_hand -= available
-        self.backlog -= available
+        self.backlog[customer_id] = max(0.0, self.backlog.get(customer_id, 0.0) - available)
         return available
+
+    def total_backlog(self) -> float:
+        """Total unmet demand across all customers combined."""
+        return sum(self.backlog.values())
 
     def receive_shipment(self, qty:float) -> None:
         """In-transit material arrives. Moves from in_transit to inventory."""
@@ -109,7 +135,7 @@ class SupplyChainNode:
         return {
             "node_id": self.node_id,
             "inventory_on_hand": round(self.inventory_on_hand,3),
-            "backlog": round(self.backlog, 3),
+            "backlog": round(self.total_backlog(), 3),
             "in_transit": round(self.in_transit, 3),
             "yield_rate": self.yield_rate,
         }

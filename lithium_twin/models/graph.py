@@ -68,7 +68,7 @@ class SupplyChainGraph:
         return sum(n.in_transit for n in self._nodes.values())
 
     def total_backlog(self) -> float:
-        return sum(n.backlog for n in self._nodes.values())
+        return sum(n.total_backlog() for n in self._nodes.values())
 
     @classmethod
     def from_json(cls, path: str | Path) -> "SupplyChainGraph":

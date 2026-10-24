@@ -18,7 +18,20 @@ _MIN_SAMPLES_FOR_RECALIBRATION: int=8
 
 class SupplyChainEngine:
     """SimPy-based weekly simulation engine for the lithium supply chain."""
-    def __init__(self, graph: SupplyChainGraph, log: EventLog, policies: dict[str, BaseStockPolicy], demand_gen: DemandGenerator, service_level: float=0.95):
+    def __init__(self, graph: SupplyChainGraph, log: EventLog, policies: dict[str, BaseStockPolicy], demand_gen: DemandGenerator, service_level: float=0.95, region_weights: dict[str, float] | None = None):
+        """
+        region_weights (Phase 3b, optional): {region_id: share of total
+        demand}, e.g. from lithium_twin.regions.region_demand_weights().
+        When given, india-oem's market demand is split across these
+        regions (each tracked as its own customer_id in oem.backlog)
+        instead of one pooled "market" stream. Each region gets its OWN
+        DemandGenerator -- same CV as the aggregate, mean scaled by its
+        weight, seeded deterministically off demand_gen's own seed so a
+        run stays reproducible while regions are NOT perfectly correlated
+        with each other (each advances its own independent RNG state).
+        When omitted, behavior is unchanged from Phase 3a (single "market"
+        customer) -- this is purely additive.
+        """
         self.env = simpy.Environment()
         self.graph = graph
         self.log = log
@@ -26,6 +39,20 @@ class SupplyChainEngine:
         self.demand_gen = demand_gen
         self.service_level = service_level
         self.weekly_snapshots: list[dict] = []
+        self.region_weights = region_weights
+        self._region_demand_gens: dict[str, DemandGenerator] | None = None
+        if region_weights:
+            base_seed = demand_gen.seed
+            total_mean = demand_gen.mean
+            cv = demand_gen.cv
+            self._region_demand_gens = {
+                region_id: DemandGenerator(
+                    mean=total_mean * weight,
+                    cv=cv,
+                    seed=base_seed + i + 1,
+                )
+                for i, (region_id, weight) in enumerate(sorted(region_weights.items()))
+            }
 
     def run(self, weeks: int, disruptions: list[Disruption] | None = None) -> None:
         """Run simulation for `weeks` time steps and collect metrics."""
@@ -42,21 +69,39 @@ class SupplyChainEngine:
 
     # MARKET DEMAND PROCESS
     def _market_demand_process(self):
-        """Generates stochastic weekly demand at india-oem from the market."""
+        """Generates stochastic weekly demand at india-oem from the market.
+
+        Phase 3b: when self._region_demand_gens is set, demand is drawn
+        PER REGION (each region its own customer_id in oem.backlog) instead
+        of one pooled "market" draw -- this is what lets fill_rate_by_region
+        and the recalibration/bullwhip helpers below tell regions apart.
+        """
         oem = self.graph.get_node("india-oem")
         while True:
             yield self.env.timeout(1)
             try:
                 week = int(self.env.now)
-                demand = self.demand_gen.sample()
-                oem.receive_demand(demand)
-                self.log.append(SupplyChainEvent(
-                    event_type=EventType.DEMAND_RECEIVED,
-                    source_node="india-oem",
-                    week=week,
-                    quantity_lce=demand,
-                    payload={"source": "market"},
-                ))
+                if self._region_demand_gens:
+                    for region_id, gen in self._region_demand_gens.items():
+                        demand = gen.sample()
+                        oem.receive_demand(region_id, demand)
+                        self.log.append(SupplyChainEvent(
+                            event_type=EventType.DEMAND_RECEIVED,
+                            source_node="india-oem",
+                            week=week,
+                            quantity_lce=demand,
+                            payload={"source": "market", "region": region_id},
+                        ))
+                else:
+                    demand = self.demand_gen.sample()
+                    oem.receive_demand("market", demand)
+                    self.log.append(SupplyChainEvent(
+                        event_type=EventType.DEMAND_RECEIVED,
+                        source_node="india-oem",
+                        week=week,
+                        quantity_lce=demand,
+                        payload={"source": "market"},
+                    ))
             except Exception as e:
                 print(f"PROCESS CRASH: {type(e).__name__}: {e}")
                 return
@@ -88,28 +133,57 @@ class SupplyChainEngine:
                         quantity_lce=produced,
                     ))
 
-            # Step 1: Retry fulfilling any outstanding backlog from current inventory
-            if node.backlog > 0 and node.inventory_on_hand > 0:
+            # Step 1: Retry fulfilling outstanding backlog from current
+            # inventory, across however many customers this node has.
+            # When inventory can't cover everyone, ration proportionally
+            # to each customer's (arc-capacity-capped) share of demand --
+            # a bias-free split, not first-come-first-served.
+            if node.backlog and node.inventory_on_hand > 0:
                 downstream_ids = self.graph.downstream_nodes(node_id)
                 if downstream_ids and node_id!="india-oem":
-                    receiver_id = downstream_ids[0]
-                    arc=self.graph.arc_data(node_id, receiver_id)
-                    retry_qty = min(node.backlog, arc["capacity_lce"])
-                    self.env.process(self._shipment_process(
-                        supplier_id=node_id,
-                        receiver_id=receiver_id,
-                        order_qty=retry_qty,
-                        arc=arc,
-                    ))
+                    capped_demand = {}
+                    for receiver_id in downstream_ids:
+                        owed = node.backlog.get(receiver_id, 0.0)
+                        if owed <= 0:
+                            continue
+                        arc = self.graph.arc_data(node_id, receiver_id)
+                        capped_demand[receiver_id] = min(owed, arc["capacity_lce"])
+                    total_capped = sum(capped_demand.values())
+                    if total_capped > 0:
+                        available = min(node.inventory_on_hand, total_capped)
+                        scale = available / total_capped if total_capped > available else 1.0
+                        for receiver_id, demand_amt in capped_demand.items():
+                            retry_qty = demand_amt * scale
+                            if retry_qty <= 0:
+                                continue
+                            arc = self.graph.arc_data(node_id, receiver_id)
+                            self.env.process(self._shipment_process(
+                                supplier_id=node_id,
+                                receiver_id=receiver_id,
+                                order_qty=retry_qty,
+                                arc=arc,
+                            ))
                 else:
-                    dispatched = node.dispatch_shipment(node.backlog)
-                    if dispatched>0:
-                        self.log.append(SupplyChainEvent(
-                            event_type=EventType.SHIPMENT_DISPATCHED,
-                            source_node=node_id,
-                            week=week,
-                            quantity_lce=dispatched,
-                        ))
+                    # No real downstream node/arc (e.g. india-oem serving
+                    # market/region customers directly) -- dispatch
+                    # straight from inventory, rationed proportionally
+                    # across backlogged customers.
+                    total_owed = node.total_backlog()
+                    if total_owed > 0:
+                        available = min(node.inventory_on_hand, total_owed)
+                        scale = available / total_owed if total_owed > available else 1.0
+                        for customer_id, owed in list(node.backlog.items()):
+                            if owed <= 0:
+                                continue
+                            dispatched = node.dispatch_shipment(customer_id, owed * scale)
+                            if dispatched > 0:
+                                self.log.append(SupplyChainEvent(
+                                    event_type=EventType.SHIPMENT_DISPATCHED,
+                                    source_node=node_id,
+                                    week=week,
+                                    quantity_lce=dispatched,
+                                    payload={"customer": customer_id},
+                                ))
 
             # Step-2: Reorder from upstream if below base level stock
             if policy is None or not upstream_ids:
@@ -126,7 +200,7 @@ class SupplyChainEngine:
 
             # Notify upstream of demand
             supplier_node = self.graph.get_node(supplier_id)
-            supplier_node.receive_demand(order_qty)
+            supplier_node.receive_demand(node_id, order_qty)
             self.log.append(SupplyChainEvent(
                 event_type = EventType.DEMAND_RECEIVED,
                 source_node = supplier_id,
@@ -164,7 +238,7 @@ class SupplyChainEngine:
         transport_loss = arc.get("transport_loss", 0.0)
 
         # Supplier dispatches what it actually has (maybe less than order_qty)
-        actual_dispatched = supplier.dispatch_shipment(order_qty)
+        actual_dispatched = supplier.dispatch_shipment(receiver_id, order_qty)
         if actual_dispatched <= 0:
             return
 
@@ -244,9 +318,9 @@ class SupplyChainEngine:
                 "total_in_transit": self.graph.total_in_transit(),
                 "total_backlog": self.graph.total_backlog(),
                 "oem_inventory": oem.inventory_on_hand,
-                "oem_backlog": oem.backlog,
+                "oem_backlog": oem.total_backlog(),
                 "pack_inventory": pack.inventory_on_hand,
-                "pack_backlog": pack.backlog,
+                "pack_backlog": pack.total_backlog(),
                 "china_proc_inventory": china.inventory_on_hand,
             })
 
@@ -261,16 +335,28 @@ class SupplyChainEngine:
         Source: Chen et al. (2000), "Quantifying the Bullwhip Effect", Management Science 46(3).
         """
         import statistics
-        oem_demands = [
-            e.quantity_lce for e in self.log.query(
-                node_id="india-oem", event_type=EventType.DEMAND_RECEIVED
-            )
-        ]
-        node_orders = [
-            e.quantity_lce for e in self.log.query(
-                node_id=node_id, event_type=EventType.ORDER_PLACED
-            )
-        ]
+
+        def _weekly_totals(events) -> list[float]:
+            """Sum same-week events before computing variance. With a
+            single demand/order stream per node (Phase 1-3a default) this
+            is a no-op -- there's already exactly one event per week.
+            It matters once a node can log MORE than one event in the
+            same week (Phase 3b: OEM gets one DEMAND_RECEIVED per region,
+            per week) -- without this, variance would be computed over
+            individual REGION-level draws rather than over TOTAL weekly
+            demand, understating the true aggregate mean and corrupting
+            the ratio bullwhip theory actually cares about."""
+            totals: dict[int, float] = {}
+            for e in events:
+                totals[e.week] = totals.get(e.week, 0.0) + e.quantity_lce
+            return list(totals.values())
+
+        oem_demands = _weekly_totals(self.log.query(
+            node_id="india-oem", event_type=EventType.DEMAND_RECEIVED
+        ))
+        node_orders = _weekly_totals(self.log.query(
+            node_id=node_id, event_type=EventType.ORDER_PLACED
+        ))
         if len(oem_demands) < 2 or len(node_orders) < 2:
             return float("nan")
         var_demand = statistics.variance(oem_demands)
@@ -291,6 +377,29 @@ class SupplyChainEngine:
             return 0.0
         return total_dispatched / total_demand
 
+    def fill_rate_by_region(self, region_id: str) -> float:
+        """Fill rate for ONE india-oem region (Phase 3b). All regions share
+        "india-oem" as source_node, so regions are told apart by payload,
+        not by node_id: DEMAND_RECEIVED carries payload["region"] (set in
+        _market_demand_process) and SHIPMENT_DISPATCHED carries
+        payload["customer"] (set in _node_process's Step 1, which already
+        tags every dispatch with the customer_id it was rationed to)."""
+        total_demand = sum(
+            e.quantity_lce for e in self.log.query(
+                node_id="india-oem", event_type=EventType.DEMAND_RECEIVED
+            )
+            if e.payload.get("region") == region_id
+        )
+        total_dispatched = sum(
+            e.quantity_lce for e in self.log.query(
+                node_id="india-oem", event_type=EventType.SHIPMENT_DISPATCHED
+            )
+            if e.payload.get("customer") == region_id
+        )
+        if total_demand == 0:
+            return 0.0
+        return total_dispatched / total_demand
+
     def _recalibration_process(self, node_id: str):
         """
         Periodically recalibrates a node's safety stock from its own
@@ -304,11 +413,19 @@ class SupplyChainEngine:
             yield self.env.timeout(_RECALIBRATION_INTERVAL)
             week = int(self.env.now)
             window_start = max(1, week-_RECALIBRATION_WINDOW+1)
-            observed = [
-                e.quantity_lce for e in self.log.query(
-                    node_id = node_id, event_type = EventType.DEMAND_RECEIVED, week_start = window_start, week_end = week,
-                )
-            ]
+            events = self.log.query(
+                node_id = node_id, event_type = EventType.DEMAND_RECEIVED, week_start = window_start, week_end = week,
+            )
+            # Sum same-week events before recalibrating -- see the
+            # matching note in bullwhip_coefficient(). Without this, a
+            # node receiving several DEMAND_RECEIVED events in one week
+            # (Phase 3b: OEM, once demand is split per region) would have
+            # its safety stock recalibrated against individual REGION-level
+            # draws instead of true total weekly demand.
+            weekly_totals: dict[int, float] = {}
+            for e in events:
+                weekly_totals[e.week] = weekly_totals.get(e.week, 0.0) + e.quantity_lce
+            observed = list(weekly_totals.values())
             if len(observed) < _MIN_SAMPLES_FOR_RECALIBRATION:
                 continue
             policy.recalibrate(observed, service_level=self.service_level)
