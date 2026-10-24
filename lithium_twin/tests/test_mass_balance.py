@@ -103,12 +103,16 @@ class TestNodeStateVariables:
         n.place_order(12000.0)
         assert n.in_transit == 12000.0
 
-    def test_receive_shipment_moves_to_inventory(self):
+    def test_receive_shipment_moves_to_raw_input(self):
+        """Arriving shipments land in raw_input (unprocessed), not
+        inventory_on_hand directly — they still need produce() to apply
+        yield loss and respect weekly_capacity before becoming dispatchable."""
         n = self._node(5000.0)
         n.place_order(8000.0)
         n.receive_shipment(8000.0)
         assert n.in_transit == pytest.approx(0.0, abs=1e-6)
-        assert n.inventory_on_hand == pytest.approx(13000.0, abs=1e-3)
+        assert n.raw_input == pytest.approx(8000.0, abs=1e-3)
+        assert n.inventory_on_hand == pytest.approx(5000.0, abs=1e-3)  # unchanged
 
     def test_receive_more_than_in_transit_raises(self):
         n = self._node()
@@ -118,10 +122,13 @@ class TestNodeStateVariables:
 
     def test_produce_applies_yield(self):
         n = self._node(10000.0)
-        output = n.produce(1000.0)
+        n.raw_input = 1000.0
+        output = n.produce()
         assert output == pytest.approx(900.0, abs=1e-3)
-        # inventory: lost 1000 input, gained 900 output → net -100
-        assert n.inventory_on_hand == pytest.approx(9900.0, abs=1e-3)
+        # raw_input and inventory_on_hand are now separate pools:
+        # raw_input is consumed, inventory_on_hand only gains the output
+        assert n.raw_input == pytest.approx(0.0, abs=1e-3)
+        assert n.inventory_on_hand == pytest.approx(10900.0, abs=1e-3)
 
     def test_supply_position(self):
         n = self._node(5000.0)
@@ -198,24 +205,33 @@ class TestSingleWeekMassBalance:
     """The core correctness test. If these fail, nothing else matters."""
 
     def test_processor_mass_balance(self):
+        """Mass balance now spans two pools: raw_input (consumed) and
+        inventory_on_hand (gains yield-adjusted output). The yield loss is
+        the gap between raw consumed and output produced — not a drawdown
+        of inventory_on_hand, since produce() never subtracts from it."""
         n = SupplyChainNode("p", NodeType.PROCESSOR, "T", 50000.0, 4, 0.90, 10000.0)
-        start = n.inventory_on_hand
-        output = n.produce(1000.0)
+        n.raw_input = 1000.0
+        output = n.produce()
         assert output == pytest.approx(900.0, abs=1e-3)
-        loss = start - n.inventory_on_hand
+        raw_consumed = 1000.0 - n.raw_input
+        loss = raw_consumed - output
         assert loss == pytest.approx(100.0, abs=1e-3)  # 1000 × (1-0.90) = 100
+        assert n.inventory_on_hand == pytest.approx(10900.0, abs=1e-3)
 
     def test_oem_zero_loss(self):
         n = SupplyChainNode("o", NodeType.OEM, "T", 40000.0, 2, 1.00, 5000.0)
-        output = n.produce(5000.0)
+        n.raw_input = 5000.0
+        output = n.produce()
         assert output == pytest.approx(5000.0)
-        assert n.inventory_on_hand == pytest.approx(5000.0)
+        assert n.inventory_on_hand == pytest.approx(10000.0)  # 5000 start + 5000 output
 
     def test_recycler_mass_balance(self):
         n = SupplyChainNode("r", NodeType.RECYCLER, "T", 5000.0, 8, 0.72, 1000.0)
-        output = n.produce(1000.0)
+        n.raw_input = 1000.0
+        output = n.produce()
         assert output == pytest.approx(720.0, abs=1e-3)
         # 280 kg LCE genuinely lost (slag, leach residue)
+        assert n.inventory_on_hand == pytest.approx(1720.0, abs=1e-3)
 
     def test_chain_yield_product(self):
         # ∏ yield_i across 6 processing nodes: 0.90 × 0.90 × 0.95 × 0.96 × 0.99 × 1.00

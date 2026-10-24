@@ -53,13 +53,25 @@ class TestBaseStockPolicy:
         assert policy.base_stock_level > expected_cycle  # SS adds buffer
 
     def test_order_qty_when_below_s(self):
+        """order_quantity = demand_mean + alpha*(S - inventory_position) --
+        the APIOBPCS order-smoothing law (Dejonckheere et al. 2003), not a
+        naive order-up-to-S formula. The demand_mean baseline term is what
+        prevents a permanent steady-state error; alpha dampens the reaction
+        to the gap rather than closing it in one order."""
         policy = BaseStockPolicy.from_demand(DEMAND_MEAN, DEMAND_STD, lead_time=4)
-        shortfall = policy.base_stock_level - 10000
-        assert policy.order_quantity(10000) == pytest.approx(shortfall, abs=1.0)
+        gap = policy.base_stock_level - 10000
+        expected = policy.demand_mean + policy.smoothing_alpha * gap
+        assert policy.order_quantity(10000) == pytest.approx(expected, abs=1.0)
 
     def test_no_order_when_above_s(self):
+        """Order quantity only hits exactly zero once the gap is negative
+        enough to offset the demand_mean baseline term entirely
+        (gap <= -demand_mean/alpha) -- being just above S by itself isn't
+        enough, since the policy still orders its average consumption rate
+        even from a position at or above target."""
         policy = BaseStockPolicy.from_demand(DEMAND_MEAN, DEMAND_STD, lead_time=4)
-        assert policy.order_quantity(policy.base_stock_level + 1000) == 0.0
+        far_above = policy.base_stock_level + (policy.demand_mean / policy.smoothing_alpha) + 1000
+        assert policy.order_quantity(far_above) == 0.0
 
     def test_higher_lead_time_higher_s(self):
         p4 = BaseStockPolicy.from_demand(DEMAND_MEAN, DEMAND_STD, lead_time=4)

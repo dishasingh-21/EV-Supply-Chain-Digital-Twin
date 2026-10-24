@@ -59,14 +59,31 @@ class BaseStockPolicy:
         self.demand_mean = new_mean
 
 
-
 def build_policies(
         graph, demand_mean: float, demand_cv: float = 0.15, service_level: float = 0.95,
 ):
     """
     Build a base stock policy for every non-source node in the graph.
+
+    demand_mean per node is its own REQUIRED INPUT -- how much it must
+    RECEIVE from its upstream supplier per week to sustain its required
+    OUTPUT once its own yield loss is applied (required_output / yield_rate).
+    This is the correct unit for order_quantity()/base_stock_level, since
+    both represent a RECEIVING target (orders arrive as raw_input), and it
+    matches capacity.py's arc-sizing units exactly. Using required OUTPUT
+    directly (an earlier version of this fix) chronically understated
+    every non-OEM node's order target by its own yield loss.
+
+    lead_time per node uses its INCOMING ARC's lead_time_weeks — the actual
+    transit delay _shipment_process enforces between an order and its
+    arrival — not node.lead_time_weeks, an independently-set JSON field
+    never consumed by the engine's own timing logic. Using the wrong value
+    here produces a base_stock_level that doesn't match the real
+    replenishment delay, chronically over- or under-sizing safety stock.
     """
-    demand_std = demand_mean * demand_cv
+    from lithium_twin.simulation.capacity import compute_required_node_outputs
+
+    required_outputs = compute_required_node_outputs(graph, demand_mean)
     policies = {}
     for node in graph.all_nodes():
         if node.node_id == "india-recycling":
@@ -74,10 +91,17 @@ def build_policies(
         upstream = graph.upstream_nodes(node.node_id)
         if not upstream:
             continue
+        upstream_id = upstream[0]
+        arc = graph.arc_data(upstream_id, node.node_id)
+        replenishment_lead_time = arc["lead_time_weeks"]
+
+        required_output = required_outputs.get(node.node_id, demand_mean)
+        node_demand_mean = required_output / node.yield_rate  # input, not output
+        node_demand_std = node_demand_mean * demand_cv
         policies[node.node_id] = BaseStockPolicy.from_demand(
-            demand_mean=demand_mean,
-            demand_std = demand_std,
-            lead_time=node.lead_time_weeks,
+            demand_mean=node_demand_mean,
+            demand_std=node_demand_std,
+            lead_time=replenishment_lead_time,
             service_level=service_level,
         )
     return policies

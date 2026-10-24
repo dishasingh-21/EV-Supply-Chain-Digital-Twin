@@ -44,6 +44,7 @@ class SupplyChainNode:
     inventory_on_hand: float = 0.0
     backlog: float = 0.0
     in_transit: float = 0.0
+    raw_input: float = 0.0
 
     def __post_init__(self) -> None:
         if self.yield_rate == 0.0:
@@ -74,7 +75,7 @@ class SupplyChainNode:
         if qty > self.in_transit + 1e-6:
             raise ValueError(f"Cannot receive {qty:.2f} when only {self.in_transit:.2f} is in transit.")
         self.in_transit = max(0.0, self.in_transit - qty)
-        self.inventory_on_hand += qty
+        self.raw_input += qty
 
     def place_order(self, qty:float) -> None:
         """
@@ -83,14 +84,14 @@ class SupplyChainNode:
         """
         self.in_transit += qty
 
-    def produce(self, input_lce: float) -> float:
+    def produce(self) -> float:
         """
         Apply yield rate to convert input to output.
         Mass balance: output = input * yield_rate
         losses: loss = input * (1-yield_rate)
         """
-        actual = min(input_lce, self.weekly_capacity/self.yield_rate)
-        self.inventory_on_hand -= actual
+        actual = min(self.raw_input, self.weekly_capacity / self.yield_rate)
+        self.raw_input -= actual
         output = actual * self.yield_rate
         self.inventory_on_hand += output
         return output

@@ -8,6 +8,7 @@ from lithium_twin.models.graph import SupplyChainGraph
 from lithium_twin.models.events import EventLog, EventType, SupplyChainEvent
 from lithium_twin.simulation.order_policy import BaseStockPolicy
 from lithium_twin.simulation.demand import DemandGenerator
+from lithium_twin.simulation.disruption import Disruption
 
 _RECYCLING_LEAD_TIME: int = 12
 _RECYCLING_TRANSPORT_LOSS: float = 0.01
@@ -26,7 +27,7 @@ class SupplyChainEngine:
         self.service_level = service_level
         self.weekly_snapshots: list[dict] = []
 
-    def run(self, weeks: int) -> None:
+    def run(self, weeks: int, disruptions: list[Disruption] | None = None) -> None:
         """Run simulation for `weeks` time steps and collect metrics."""
         self.env.process(self._market_demand_process())
         for node_id in self.graph.topological_sort():
@@ -35,6 +36,8 @@ class SupplyChainEngine:
             self.env.process(self._recalibration_process(node_id))
         self.env.process(self._recycling_injection_process())
         self.env.process(self._snapshot_process(weeks))
+        for disruption in (disruptions or []):
+            self.env.process(self._disruption_process(disruption))
         self.env.run(until=weeks+0.5)
 
     # MARKET DEMAND PROCESS
@@ -74,6 +77,16 @@ class SupplyChainEngine:
         while True:
             yield self.env.timeout(1)
             week = int(self.env.now)
+
+            if node.raw_input > 0:
+                produced = node.produce()
+                if produced > 0:
+                    self.log.append(SupplyChainEvent(
+                        event_type=EventType.PRODUCTION_COMPLETED,
+                        source_node=node_id,
+                        week=week,
+                        quantity_lce=produced,
+                    ))
 
             # Step 1: Retry fulfilling any outstanding backlog from current inventory
             if node.backlog > 0 and node.inventory_on_hand > 0:
@@ -190,17 +203,13 @@ class SupplyChainEngine:
             yield self.env.timeout(1)
             week = int(self.env.now)
 
-            # Recycle what's available (up to weekly capacity)
-            available = min(recycler.inventory_on_hand, recycler.weekly_capacity)
+            available = recycler.inventory_on_hand
             if available <= 0:
                 continue
-            recovered = recycler.produce(available)
-            if recovered <= 0:
-                continue
+            recycler.inventory_on_hand -= available
 
-            # Schedule arrival at china-processing after transit
             self.env.process(
-                self._recycling_arrival(recovered, week, china_proc)
+                self._recycling_arrival(available, week, china_proc)
             )
 
     def _recycling_arrival(self, qty: float, week_dispatched: int, china_proc):
@@ -303,6 +312,49 @@ class SupplyChainEngine:
             if len(observed) < _MIN_SAMPLES_FOR_RECALIBRATION:
                 continue
             policy.recalibrate(observed, service_level=self.service_level)
+
+    def _disruption_process(self, disruption: Disruption):
+        """Waits until start_week, degrades the target parameter, waits
+        duration_weeks, then restores the original value exactly."""
+        yield self.env.timeout(disruption.start_week)
+
+        if disruption.target_type == "node":
+            target = self.graph.get_node(disruption.target_id)
+            original_value = getattr(target, disruption.parameter)
+        else:
+            from_id, to_id = disruption.target_id
+            target = self.graph.arc_data(from_id, to_id)
+            original_value = target[disruption.parameter]
+
+        degraded_value = original_value * (1.0 - disruption.reduction_pct)
+
+        if disruption.target_type == "node":
+            setattr(target, disruption.parameter, degraded_value)
+        else:
+            target[disruption.parameter] = degraded_value
+
+        self.log.append(SupplyChainEvent(
+            event_type=EventType.DISRUPTION_STARTED,
+            source_node=disruption.label(),
+            week=int(self.env.now),
+            quantity_lce=0.0,
+            payload={"parameter": disruption.parameter, "reduced_to": degraded_value, "original": original_value},
+        ))
+
+        yield self.env.timeout(disruption.duration_weeks)
+
+        if disruption.target_type == "node":
+            setattr(target, disruption.parameter, original_value)
+        else:
+            target[disruption.parameter] = original_value
+
+        self.log.append(SupplyChainEvent(
+            event_type=EventType.DISRUPTION_ENDED,
+            source_node=disruption.label(),
+            week=int(self.env.now),
+            quantity_lce=0.0,
+            payload={"parameter": disruption.parameter, "restored_to": original_value},
+        ))
 
 
 

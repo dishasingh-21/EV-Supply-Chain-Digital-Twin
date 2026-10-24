@@ -51,7 +51,7 @@ class SupplyChainGraph:
     def arc_data(self, source_id: str, dest_id: str) -> dict:
         if not self._g.has_edge(source_id, dest_id):
             raise KeyError(f"No arc from '{source_id} to '{dest_id}'.")
-        return dict(self._g[source_id][dest_id])
+        return self._g[source_id][dest_id]
 
     def get_node(self, node_id:str) -> SupplyChainNode:
         if node_id not in self._nodes:
